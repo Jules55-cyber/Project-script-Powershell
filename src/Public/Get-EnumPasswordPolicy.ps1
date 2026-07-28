@@ -27,8 +27,8 @@ function Get-EnumPasswordPolicy {
 
     # --- On construit l'objet final avec les valeurs parsées ---
     [PSCustomObject]@{
-     Category = 'Password Policy'
-     MinPasswordAge   = Get-Value 'Dur.e de vie minimale'
+        Category = 'Password Policy'
+        MinPasswordAge   = Get-Value 'Dur.e de vie minimale'
         MaxPasswordAge   = Get-Value 'Dur.e de vie maximale'
         MinPasswordLen   = Get-Value 'Longueur minimale'
         PasswordHistory  = Get-Value 'Nombre de mots de passe'
