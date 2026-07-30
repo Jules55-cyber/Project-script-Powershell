@@ -6,6 +6,10 @@ function Export-EnumReport {
         [string]$OutputPath = '.\output'
     )
 
+     if (-not (Test-Path $OutputPath)) {
+        New-Item -Path $OutputPath -ItemType Directory -Force | Out-Null
+    }
+
     $horodatage = Get-Date -Format 'yyyyMMdd_HHmmss'
     $fichier = Join-Path $OutputPath "rapport_$horodatage"
 
