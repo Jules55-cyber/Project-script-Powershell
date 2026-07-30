@@ -43,6 +43,9 @@ function Invoke-EnumFull {
 
     Write-EnumLog "Rapport exporté au format $Format." -Level INFO
 
-    # 3. On renvoie aussi les résultats (pratique pour la démo à l'écran)
+    # Affichage formaté et lisible, groupé par section
+    Show-EnumReport -Data $resultats
+
+    # On renvoie quand même les objets (pour un usage éventuel : $x = Invoke-EnumFull)
     return $resultats
 }
