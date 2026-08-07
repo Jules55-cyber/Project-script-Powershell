@@ -35,6 +35,8 @@ function Invoke-EnumFull {
     $resultats += Get-EnumAntivirus
     $resultats += Get-EnumPasswordPolicy
     $resultats += Get-EnumDefenderExclusions
+    $resultats += Get-EnumActiveSessions
+    $resultats += Get-EnumPrivilegesUsers   
 
     Write-EnumLog "Collecte terminée : $($resultats.Count) éléments." -Level INFO
 
