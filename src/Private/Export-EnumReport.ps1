@@ -18,25 +18,32 @@ function Export-EnumReport {
         'CSV'  { $Data | Export-Csv "$fichier.csv" -NoTypeInformation }
         'HTML' {
 
-            # --- Fonction interne : transforme une valeur en texte lisible ---
-            # Les champs imbriqués (Groups, Privileges) sont des tableaux d'objets.
-            # Sans ça, ConvertTo-Html afficherait "System.Object[]".
-            function Format-Valeur($valeur) {
-                if ($null -eq $valeur) { return '' }
-
-                # Si c'est une collection d'objets (ex : Groups, Privileges)
-                if ($valeur -is [array]) {
-                    $lignes = $valeur | ForEach-Object {
-                        # On concatène les propriétés de chaque sous-objet
-                        ($_.PSObject.Properties | ForEach-Object { $_.Value }) -join ' | '
-                    }
-                    return ($lignes -join "`n")
-                }
-
-                return $valeur.ToString()
+            # --- Echappement HTML (pour ne pas casser le rendu avec < > &) ---
+            function Escape-Html($texte) {
+                return ($texte -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;')
             }
 
-            # --- CSS : thème sombre + accent doré (identité de la présentation) ---
+            # --- Transforme une valeur en HTML lisible ---
+            # Les champs imbriques (Groups, Privileges) sont des tableaux d'objets.
+            # On les met dans un bloc repliable <details> avec un compteur.
+            function Format-Valeur($valeur, $nomColonne) {
+                if ($null -eq $valeur) { return '' }
+
+                if ($valeur -is [array]) {
+                    $nb = $valeur.Count
+                    $lignes = $valeur | ForEach-Object {
+                        $texte = ($_.PSObject.Properties | ForEach-Object { $_.Value }) -join ' | '
+                        Escape-Html $texte
+                    }
+                    $contenu = $lignes -join '<br>'
+                    # <details>/<summary> = repliable natif HTML (aucun JavaScript)
+                    return "<details><summary>$nomColonne ($nb)</summary>$contenu</details>"
+                }
+
+                return Escape-Html $valeur.ToString()
+            }
+
+            # --- CSS : theme sombre + accent dore ---
             $css = @'
 <style>
     body {
@@ -87,11 +94,27 @@ function Export-EnumReport {
     tr:hover td {
         background-color: #2c2c2c;
     }
+    details summary {
+        cursor: pointer;
+        color: #d4af37;
+        font-weight: 600;
+        padding: 2px 0;
+    }
+    details summary:hover {
+        color: #e6c860;
+    }
+    details[open] summary {
+        margin-bottom: 8px;
+    }
+    details > *:not(summary) {
+        color: #c0c0c0;
+        font-size: 12px;
+        line-height: 1.7;
+    }
 </style>
 '@
 
-            # --- En-tête du document ---
-            $date = Get-Date -Format 'dd/MM/yyyy HH:mm:ss'
+            # --- En-tete du document (date de generation retiree) ---
             $html = @"
 <!DOCTYPE html>
 <html lang="fr">
@@ -102,7 +125,7 @@ $css
 </head>
 <body>
 <h1>Rapport d'enumeration PSEnum</h1>
-<div class="meta">Genere le $date &bull; Machine : $env:COMPUTERNAME</div>
+<div class="meta">Machine : $env:COMPUTERNAME</div>
 "@
 
             # --- Une section <h2> + table par Category ---
@@ -110,18 +133,13 @@ $css
                 $html += "<h2>$($_.Name)</h2>"
                 $html += "<table>"
 
-                # En-têtes = toutes les propriétés sauf Category (deja dans le titre)
                 $colonnes = $_.Group[0].PSObject.Properties.Name | Where-Object { $_ -ne 'Category' }
                 $html += "<tr>" + (($colonnes | ForEach-Object { "<th>$_</th>" }) -join '') + "</tr>"
 
-                # Lignes de données
                 foreach ($item in $_.Group) {
                     $html += "<tr>"
                     foreach ($col in $colonnes) {
-                        $valeur = Format-Valeur $item.$col
-                        # On echappe les < > pour ne pas casser le HTML
-                        $valeur = $valeur -replace '<', '&lt;' -replace '>', '&gt;'
-                        $html += "<td>$valeur</td>"
+                        $html += "<td>$(Format-Valeur $item.$col $col)</td>"
                     }
                     $html += "</tr>"
                 }
@@ -131,7 +149,6 @@ $css
 
             $html += "</body></html>"
 
-            # --- Écriture (UTF8 pour les accents) ---
             $html | Out-File "$fichier.html" -Encoding UTF8
         }
     }
