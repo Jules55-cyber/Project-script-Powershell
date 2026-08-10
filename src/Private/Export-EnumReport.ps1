@@ -1,7 +1,7 @@
 function Export-EnumReport {
     param(
         [object[]]$Data,
-        [ValidateSet('JSON','CSV','HTML')]
+        [ValidateSet('JSON','CSV','HTML','PDF')]
         [string]$Format = 'JSON',
         [string]$OutputPath = '.\output'
     )
@@ -16,7 +16,10 @@ function Export-EnumReport {
     switch ($Format) {
         'JSON' { $Data | ConvertTo-Json -Depth 5 | Out-File "$fichier.json" }
         'CSV'  { $Data | Export-Csv "$fichier.csv" -NoTypeInformation }
-        'HTML' {
+
+        # HTML et PDF partagent la meme generation HTML.
+        # PDF = on genere le HTML, puis on le convertit via Edge/Chrome headless.
+        { $_ -in @('HTML','PDF') } {
 
             # --- Echappement HTML (pour ne pas casser le rendu avec < > &) ---
             function Escape-Html($texte) {
@@ -36,14 +39,13 @@ function Export-EnumReport {
                         Escape-Html $texte
                     }
                     $contenu = $lignes -join '<br>'
-                    # <details>/<summary> = repliable natif HTML (aucun JavaScript)
                     return "<details><summary>$nomColonne ($nb)</summary>$contenu</details>"
                 }
 
                 return Escape-Html $valeur.ToString()
             }
 
-            # --- CSS : theme sombre + accent dore ---
+            # --- CSS : theme sombre + accent dore + onglets + regles impression ---
             $css = @'
 <style>
     body {
@@ -52,6 +54,8 @@ function Export-EnumReport {
         color: #e0e0e0;
         margin: 0;
         padding: 30px;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
     }
     h1 {
         color: #d4af37;
@@ -62,15 +66,67 @@ function Export-EnumReport {
     .meta {
         color: #888;
         font-size: 13px;
-        margin-bottom: 30px;
+        margin-bottom: 20px;
     }
     h2 {
         color: #d4af37;
-        margin-top: 35px;
+        margin-top: 10px;
         font-size: 19px;
         border-left: 4px solid #d4af37;
         padding-left: 12px;
     }
+
+    /* --- Barre d'onglets collante --- */
+    .tabs {
+        position: sticky;
+        top: 0;
+        background-color: #1a1a1a;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 12px 0;
+        border-bottom: 1px solid #333;
+        margin-bottom: 20px;
+        z-index: 10;
+    }
+    .tab-btn {
+        background-color: #242424;
+        color: #e0e0e0;
+        border: 1px solid #3a3a3a;
+        border-radius: 6px;
+        padding: 8px 14px;
+        cursor: pointer;
+        font-size: 13px;
+        font-family: inherit;
+        transition: all 0.15s;
+    }
+    .tab-btn:hover {
+        border-color: #d4af37;
+        color: #d4af37;
+    }
+    .tab-btn.active {
+        background-color: #d4af37;
+        color: #1a1a1a;
+        border-color: #d4af37;
+        font-weight: 600;
+    }
+    .tab-btn .badge {
+        display: inline-block;
+        margin-left: 6px;
+        background-color: rgba(0,0,0,0.25);
+        border-radius: 10px;
+        padding: 1px 7px;
+        font-size: 11px;
+    }
+    .tab-btn.active .badge {
+        background-color: #1a1a1a;
+        color: #d4af37;
+    }
+
+    /* --- Panneaux : un seul visible a la fois --- */
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
     table {
         border-collapse: collapse;
         width: 100%;
@@ -91,30 +147,82 @@ function Export-EnumReport {
         white-space: pre-line;
         vertical-align: top;
     }
-    tr:hover td {
-        background-color: #2c2c2c;
-    }
+    tr:hover td { background-color: #2c2c2c; }
+
     details summary {
         cursor: pointer;
         color: #d4af37;
         font-weight: 600;
         padding: 2px 0;
     }
-    details summary:hover {
-        color: #e6c860;
-    }
-    details[open] summary {
-        margin-bottom: 8px;
-    }
+    details summary:hover { color: #e6c860; }
+    details[open] summary { margin-bottom: 8px; }
     details > *:not(summary) {
         color: #c0c0c0;
         font-size: 12px;
         line-height: 1.7;
     }
+
+    /* --- Impression / PDF : on masque les onglets et on affiche TOUT --- */
+    @media print {
+        .tabs { display: none; }
+        .tab-panel { display: block !important; page-break-before: always; }
+        .tab-panel:first-of-type { page-break-before: avoid; }
+        body { padding: 20px; }
+    }
 </style>
 '@
 
-            # --- En-tete du document (date de generation retiree) ---
+            # --- JavaScript : navigation par onglets + ouverture des <details> a l'impression ---
+            $scriptJs = @'
+function showTab(id, btn) {
+    document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.remove('active'); });
+    document.getElementById(id).classList.add('active');
+    document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+}
+// Avant impression : on deplie tous les blocs <details> pour un PDF complet
+window.addEventListener('beforeprint', function () {
+    document.querySelectorAll('details').forEach(function (d) { d.open = true; });
+});
+'@
+
+            # --- On regroupe une seule fois par Category ---
+            $groupes = $Data | Group-Object Category
+
+            # --- Barre d'onglets (1 onglet = 1 categorie + badge compteur) ---
+            $i = 0
+            $onglets = ''
+            foreach ($g in $groupes) {
+                $actif = if ($i -eq 0) { ' active' } else { '' }
+                $onglets += "<button class=""tab-btn$actif"" onclick=""showTab('cat-$i', this)"">$($g.Name)<span class=""badge"">$($g.Count)</span></button>"
+                $i++
+            }
+
+            # --- Panneaux (une section par categorie) ---
+            $i = 0
+            $panneaux = ''
+            foreach ($g in $groupes) {
+                $actif = if ($i -eq 0) { ' active' } else { '' }
+                $panneaux += "<section id=""cat-$i"" class=""tab-panel$actif"">"
+                $panneaux += "<h2>$($g.Name)</h2><table>"
+
+                $colonnes = $g.Group[0].PSObject.Properties.Name | Where-Object { $_ -ne 'Category' }
+                $panneaux += "<tr>" + (($colonnes | ForEach-Object { "<th>$_</th>" }) -join '') + "</tr>"
+
+                foreach ($item in $g.Group) {
+                    $panneaux += "<tr>"
+                    foreach ($col in $colonnes) {
+                        $panneaux += "<td>$(Format-Valeur $item.$col $col)</td>"
+                    }
+                    $panneaux += "</tr>"
+                }
+
+                $panneaux += "</table></section>"
+                $i++
+            }
+
+            # --- Assemblage du document ---
             $html = @"
 <!DOCTYPE html>
 <html lang="fr">
@@ -126,30 +234,55 @@ $css
 <body>
 <h1>Rapport d'enumeration PSEnum</h1>
 <div class="meta">Machine : $env:COMPUTERNAME</div>
+<nav class="tabs">$onglets</nav>
+$panneaux
+<script>
+$scriptJs
+</script>
+</body>
+</html>
 "@
 
-            # --- Une section <h2> + table par Category ---
-            $Data | Group-Object Category | ForEach-Object {
-                $html += "<h2>$($_.Name)</h2>"
-                $html += "<table>"
-
-                $colonnes = $_.Group[0].PSObject.Properties.Name | Where-Object { $_ -ne 'Category' }
-                $html += "<tr>" + (($colonnes | ForEach-Object { "<th>$_</th>" }) -join '') + "</tr>"
-
-                foreach ($item in $_.Group) {
-                    $html += "<tr>"
-                    foreach ($col in $colonnes) {
-                        $html += "<td>$(Format-Valeur $item.$col $col)</td>"
-                    }
-                    $html += "</tr>"
-                }
-
-                $html += "</table>"
-            }
-
-            $html += "</body></html>"
-
             $html | Out-File "$fichier.html" -Encoding UTF8
+
+            # =========================================================
+            # MISSION 2 : conversion PDF via Edge/Chrome headless
+            # =========================================================
+            if ($Format -eq 'PDF') {
+                $cheminHtml = (Resolve-Path "$fichier.html").Path
+                $cheminPdf  = [System.IO.Path]::GetFullPath("$fichier.pdf")
+                $uriHtml    = ([System.Uri]$cheminHtml).AbsoluteUri
+
+                # Navigateur Chromium : Edge en priorite, puis Chrome
+                $candidats = @(
+                    "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
+                    "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe",
+                    "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
+                    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe"
+                )
+                $navigateur = $candidats | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+                if (-not $navigateur) {
+                    Write-Warning "Edge/Chrome introuvable : PDF non genere. HTML disponible : $cheminHtml"
+                }
+                else {
+                    # Profil temporaire isole : force une instance fraiche.
+                    # Sinon un Edge deja ouvert intercepte la commande => aucun PDF cree.
+                    $profilTemp = Join-Path $env:TEMP "psenum_pdf_$horodatage"
+
+                    & $navigateur --headless --disable-gpu --no-pdf-header-footer `
+                        --user-data-dir="$profilTemp" `
+                        --print-to-pdf="$cheminPdf" `
+                        $uriHtml 2>$null
+
+                    if (Test-Path $cheminPdf) {
+                        Write-Host "PDF genere : $cheminPdf" -ForegroundColor Green
+                    }
+                    else {
+                        Write-Warning "Conversion PDF echouee. HTML disponible : $cheminHtml"
+                    }
+                }
+            }
         }
     }
 }
