@@ -18,17 +18,14 @@ function Export-EnumReport {
         'CSV'  { $Data | Export-Csv "$fichier.csv" -NoTypeInformation }
 
         # HTML et PDF partagent la meme generation HTML.
-        # PDF = on genere le HTML, puis on le convertit via Edge/Chrome headless.
         { $_ -in @('HTML','PDF') } {
 
-            # --- Echappement HTML (pour ne pas casser le rendu avec < > &) ---
+            # --- Echappement HTML ---
             function Escape-Html($texte) {
                 return ($texte -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;')
             }
 
             # --- Transforme une valeur en HTML lisible ---
-            # Les champs imbriques (Groups, Privileges) sont des tableaux d'objets.
-            # On les met dans un bloc repliable <details> avec un compteur.
             function Format-Valeur($valeur, $nomColonne) {
                 if ($null -eq $valeur) { return '' }
 
@@ -45,7 +42,7 @@ function Export-EnumReport {
                 return Escape-Html $valeur.ToString()
             }
 
-            # --- CSS : theme sombre + accent dore + onglets + regles impression ---
+            # --- CSS : theme sombre + onglets + regles impression ---
             $css = @'
 <style>
     body {
@@ -75,8 +72,6 @@ function Export-EnumReport {
         border-left: 4px solid #d4af37;
         padding-left: 12px;
     }
-
-    /* --- Barre d'onglets collante --- */
     .tabs {
         position: sticky;
         top: 0;
@@ -98,7 +93,6 @@ function Export-EnumReport {
         cursor: pointer;
         font-size: 13px;
         font-family: inherit;
-        transition: all 0.15s;
     }
     .tab-btn:hover {
         border-color: #d4af37;
@@ -122,11 +116,8 @@ function Export-EnumReport {
         background-color: #1a1a1a;
         color: #d4af37;
     }
-
-    /* --- Panneaux : un seul visible a la fois --- */
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
-
     table {
         border-collapse: collapse;
         width: 100%;
@@ -148,7 +139,6 @@ function Export-EnumReport {
         vertical-align: top;
     }
     tr:hover td { background-color: #2c2c2c; }
-
     details summary {
         cursor: pointer;
         color: #d4af37;
@@ -162,8 +152,6 @@ function Export-EnumReport {
         font-size: 12px;
         line-height: 1.7;
     }
-
-    /* --- Impression / PDF : on masque les onglets et on affiche TOUT --- */
     @media print {
         .tabs { display: none; }
         .tab-panel { display: block !important; page-break-before: always; }
@@ -173,7 +161,7 @@ function Export-EnumReport {
 </style>
 '@
 
-            # --- JavaScript : navigation par onglets + ouverture des <details> a l'impression ---
+            # --- JavaScript : navigation par onglets ---
             $scriptJs = @'
 function showTab(id, btn) {
     document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.remove('active'); });
@@ -181,16 +169,14 @@ function showTab(id, btn) {
     document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
     btn.classList.add('active');
 }
-// Avant impression : on deplie tous les blocs <details> pour un PDF complet
 window.addEventListener('beforeprint', function () {
     document.querySelectorAll('details').forEach(function (d) { d.open = true; });
 });
 '@
 
-            # --- On regroupe une seule fois par Category ---
             $groupes = $Data | Group-Object Category
 
-            # --- Barre d'onglets (1 onglet = 1 categorie + badge compteur) ---
+            # --- Barre d'onglets ---
             $i = 0
             $onglets = ''
             foreach ($g in $groupes) {
@@ -199,7 +185,7 @@ window.addEventListener('beforeprint', function () {
                 $i++
             }
 
-            # --- Panneaux (une section par categorie) ---
+            # --- Panneaux ---
             $i = 0
             $panneaux = ''
             foreach ($g in $groupes) {
@@ -222,7 +208,7 @@ window.addEventListener('beforeprint', function () {
                 $i++
             }
 
-            # --- Assemblage du document ---
+            # --- Assemblage ---
             $html = @"
 <!DOCTYPE html>
 <html lang="fr">
@@ -245,15 +231,12 @@ $scriptJs
 
             $html | Out-File "$fichier.html" -Encoding UTF8
 
-            # =========================================================
-            # MISSION 2 : conversion PDF via Edge/Chrome headless
-            # =========================================================
+            # --- Conversion PDF via Edge/Chrome headless ---
             if ($Format -eq 'PDF') {
                 $cheminHtml = (Resolve-Path "$fichier.html").Path
                 $cheminPdf  = [System.IO.Path]::GetFullPath("$fichier.pdf")
                 $uriHtml    = ([System.Uri]$cheminHtml).AbsoluteUri
 
-                # Navigateur Chromium : Edge en priorite, puis Chrome
                 $candidats = @(
                     "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe",
                     "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe",
@@ -266,23 +249,41 @@ $scriptJs
                     Write-Warning "Edge/Chrome introuvable : PDF non genere. HTML disponible : $cheminHtml"
                 }
                 else {
-                    # Profil temporaire isole : force une instance fraiche.
-                    # Sinon un Edge deja ouvert intercepte la commande => aucun PDF cree.
                     $profilTemp = Join-Path $env:TEMP "psenum_pdf_$horodatage"
 
-                    & $navigateur --headless --disable-gpu --no-pdf-header-footer `
-                        --user-data-dir="$profilTemp" `
-                        --print-to-pdf="$cheminPdf" `
-                        $uriHtml 2>$null
+                    Start-Process -FilePath $navigateur -ArgumentList @(
+                        '--headless=new',
+                        '--disable-gpu',
+                        '--no-pdf-header-footer',
+                        "--user-data-dir=$profilTemp",
+                        "--print-to-pdf=$cheminPdf",
+                        $uriHtml
+                    ) -Wait -WindowStyle Hidden
+
+                    # Attente active : jusqu'a 30 s, et on verifie que la taille
+                    # se stabilise (fichier entierement ecrit, pas en cours d'ecriture)
+                    $tailleAvant = -1
+                    $essais = 0
+                    while ($essais -lt 60) {
+                        Start-Sleep -Milliseconds 500
+                        if (Test-Path $cheminPdf) {
+                            $tailleActuelle = (Get-Item $cheminPdf).Length
+                            if ($tailleActuelle -gt 0 -and $tailleActuelle -eq $tailleAvant) { break }
+                            $tailleAvant = $tailleActuelle
+                        }
+                        $essais++
+                    }
 
                     if (Test-Path $cheminPdf) {
-                        Write-Host "PDF genere : $cheminPdf" -ForegroundColor Green
+                        $ko = [math]::Round((Get-Item $cheminPdf).Length / 1KB)
+                        Write-Host "PDF genere : $cheminPdf ($ko Ko)" -ForegroundColor Green
                     }
                     else {
                         Write-Warning "Conversion PDF echouee. HTML disponible : $cheminHtml"
                     }
                 }
+                }
             }
         }
     }
-}
+
