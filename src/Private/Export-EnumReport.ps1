@@ -234,7 +234,7 @@ $scriptJs
             # --- Conversion PDF via Edge/Chrome headless ---
             if ($Format -eq 'PDF') {
                 $cheminHtml = (Resolve-Path "$fichier.html").Path
-                $cheminPdf  = [System.IO.Path]::GetFullPath("$fichier.pdf")
+                $cheminPdf  = Join-Path (Split-Path $cheminHtml -Parent) ((Split-Path $cheminHtml -Leaf) -replace '\.html$', '.pdf')
                 $uriHtml    = ([System.Uri]$cheminHtml).AbsoluteUri
 
                 $candidats = @(
