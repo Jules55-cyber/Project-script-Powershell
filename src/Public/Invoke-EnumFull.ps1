@@ -11,7 +11,7 @@ function Invoke-EnumFull {
 #>
     [CmdletBinding()]
     param(
-        [ValidateSet('JSON','CSV','HTML')]
+        [ValidateSet('JSON','CSV','HTML','PDF')]
         [string]$Format = 'JSON',
 
         [string]$OutputPath = '.\output'
