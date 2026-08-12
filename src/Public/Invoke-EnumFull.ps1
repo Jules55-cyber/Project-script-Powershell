@@ -1,4 +1,4 @@
-function Invoke-EnumFull {
+﻿function Invoke-EnumFull {
 <#
 .SYNOPSIS
     Orchestre l'énumération complète et exporte un rapport.
@@ -16,6 +16,8 @@ function Invoke-EnumFull {
 
         [string]$OutputPath = '.\output'
     )
+    # Force l'affichage UTF-8 dans la console (evite les accents casses)
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
     Write-EnumLog "Démarrage de l'énumération complète" -Level INFO
 
