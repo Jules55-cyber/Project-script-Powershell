@@ -1,4 +1,4 @@
-function Export-EnumReport {
+﻿function Export-EnumReport {
     param(
         [object[]]$Data,
         [ValidateSet('JSON','CSV','HTML','PDF')]
