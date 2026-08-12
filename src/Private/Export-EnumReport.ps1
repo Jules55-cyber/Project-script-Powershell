@@ -274,6 +274,7 @@ $scriptJs
                         $essais++
                     }
 
+                    Start-Sleep -Seconds 3                    
                     if (Test-Path $cheminPdf) {
                         $ko = [math]::Round((Get-Item $cheminPdf).Length / 1KB)
                         Write-Host "PDF genere : $cheminPdf ($ko Ko)" -ForegroundColor Green
